@@ -10,6 +10,10 @@ let draggedComponent = null;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
 let wireStartComp = null;
+let wireStartPin = null;
+let currentMouseX = 0;
+let currentMouseY = 0;
+
 let lastTime = performance.now();
 let frameCount = 0;
 let fps = 60;
@@ -20,291 +24,313 @@ const App = {
         window.addEventListener('resize', () => this.resizeCanvas());
         window.addEventListener('keydown', (e) => this.handleKeyboard(e));
         
-        this.setupUI();
-        this.setupCanvasEvents();
-        this.renderLoop();
-    },
+        canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    resizeCanvas() {
-        const rect = canvas.getBoundingClientRect();
-        canvas.width = rect.width * window.devicePixelRatio;
-        canvas.height = rect.height * window.devicePixelRatio;
-        ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-    },
-
-    setupUI() {
-        document.querySelectorAll('.component-item').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                document.querySelectorAll('.component-item').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                activeComponentType = btn.getAttribute('data-type');
-                document.getElementById('status-text').textContent = `Selected: ${activeComponentType}. Click canvas to place.`;
+        document.querySelectorAll('.palette-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+                activeComponentType = btn.dataset.type;
             });
+        });
+
+        document.querySelectorAll('.fault-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (engine.selectedComponentId) {
+                    engine.setFault(engine.selectedComponentId, btn.dataset.fault);
+                }
+            });
+        });
+
+        document.getElementById('btn-run').addEventListener('click', () => {
+            engine.isRunning = !engine.isRunning;
+            const btnRun = document.getElementById('btn-run');
+            btnRun.textContent = engine.isRunning ? 'Pause' : 'Run';
+            btnRun.classList.toggle('btn-primary', !engine.isRunning);
+            btnRun.classList.toggle('btn-danger', engine.isRunning);
         });
 
         document.getElementById('btn-step').addEventListener('click', () => {
             engine.step();
-        });
-
-        const btnRun = document.getElementById('btn-run');
-        const btnPause = document.getElementById('btn-pause');
-
-        btnRun.addEventListener('click', () => {
-            engine.isRunning = true;
-            btnRun.style.display = 'none';
-            btnPause.style.display = 'inline-block';
-            document.getElementById('status-text').textContent = 'Simulation running...';
-        });
-
-        btnPause.addEventListener('click', () => {
-            engine.isRunning = false;
-            btnPause.style.display = 'none';
-            btnRun.style.display = 'inline-block';
-            document.getElementById('status-text').textContent = 'Simulation paused.';
+            this.updateTelemetry();
         });
 
         document.getElementById('btn-reset').addEventListener('click', () => {
-            engine.reset();
-            document.getElementById('status-text').textContent = 'Simulation reset.';
+            engine.components.clear();
+            engine.wires = [];
+            engine.clockCycles = 0;
+            engine.selectedComponentId = null;
+            this.updateTelemetry();
         });
 
         document.getElementById('btn-export').addEventListener('click', () => {
-            const data = JSON.stringify(engine.serialize(), null, 2);
-            const blob = new Blob([data], {type: 'application/json'});
+            const json = engine.exportJSON();
+            const blob = new Blob([json], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'circuit-fault-sim.json';
+            a.download = `circuit-${Date.now()}.json`;
             a.click();
             URL.revokeObjectURL(url);
-            document.getElementById('status-text').textContent = 'Circuit exported successfully.';
         });
 
-        const fileInput = document.getElementById('file-input');
         document.getElementById('btn-import').addEventListener('click', () => {
-            fileInput.click();
+            document.getElementById('file-input').click();
         });
 
-        fileInput.addEventListener('change', (e) => {
+        document.getElementById('file-input').addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
             const reader = new FileReader();
             reader.onload = (event) => {
-                try {
-                    const data = JSON.parse(event.target.result);
-                    if (engine.deserialize(data)) {
-                        document.getElementById('status-text').textContent = 'Circuit imported successfully.';
-                    } else {
-                        alert('Invalid circuit data structure.');
-                    }
-                } catch (err) {
-                    alert('Failed to parse JSON file.');
+                if (engine.importJSON(event.target.result)) {
+                    this.updateTelemetry();
+                } else {
+                    alert('Invalid circuit schema format.');
                 }
             };
             reader.readAsText(file);
-            fileInput.value = '';
         });
 
-        document.getElementById('btn-inject').addEventListener('click', () => {
-            if (engine.selectedComponentId) {
-                const faultType = document.getElementById('fault-type').value;
-                engine.injectFault(engine.selectedComponentId, faultType);
-                document.getElementById('status-text').textContent = `Injected ${faultType} fault into component ${engine.selectedComponentId}.`;
-            } else {
-                alert('Select a component on the canvas first.');
-            }
-        });
+        requestAnimationFrame((t) => this.loop(t));
     },
 
-    setupCanvasEvents() {
-        canvas.addEventListener('mousedown', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-
-            // Check component click
-            let clickedComp = null;
-            for (const [id, comp] of engine.components) {
-                if (x >= comp.x - 30 && x <= comp.x + 30 && y >= comp.y - 20 && y <= comp.y + 20) {
-                    clickedComp = comp;
-                    break;
-                }
-            }
-
-            if (clickedComp) {
-                engine.selectedComponentId = clickedComp.id;
-                if (e.shiftKey) {
-                    // Wire creation start
-                    wireStartComp = clickedComp;
-                } else {
-                    isDragging = true;
-                    draggedComponent = clickedComp;
-                    dragOffsetX = x - clickedComp.x;
-                    dragOffsetY = y - clickedComp.y;
-                }
-                if (clickedComp.type === 'INPUT') {
-                    clickedComp.state = clickedComp.state === 0 ? 1 : 0;
-                }
-            } else if (activeComponentType) {
-                engine.addComponent(activeComponentType, x, y);
-                document.getElementById('status-text').textContent = `Placed ${activeComponentType}.`;
-            } else {
-                engine.selectedComponentId = null;
-            }
-        });
-
-        canvas.addEventListener('mousemove', (e) => {
-            if (isDragging && draggedComponent) {
-                const rect = canvas.getBoundingClientRect();
-                draggedComponent.x = (e.clientX - rect.left) - dragOffsetX;
-                draggedComponent.y = (e.clientY - rect.top) - dragOffsetY;
-            }
-        });
-
-        canvas.addEventListener('mouseup', (e) => {
-            if (wireStartComp) {
-                const rect = canvas.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-                for (const [id, comp] of engine.components) {
-                    if (comp.id !== wireStartComp.id && x >= comp.x - 30 && x <= comp.x + 30 && y >= comp.y - 20 && y <= comp.y + 20) {
-                        engine.addWire(wireStartComp.id, comp.id);
-                        document.getElementById('status-text').textContent = `Connected wire from ${wireStartComp.id} to ${comp.id}.`;
-                        break;
-                    }
-                }
-                wireStartComp = null;
-            }
-            isDragging = false;
-            draggedComponent = null;
-        });
-
-        canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            const rect = canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            for (const [id, comp] of engine.components) {
-                if (x >= comp.x - 30 && x <= comp.x + 30 && y >= comp.y - 20 && y <= comp.y + 20) {
-                    engine.removeComponent(id);
-                    document.getElementById('status-text').textContent = `Removed component ${id}.`;
-                    break;
-                }
-            }
-        });
+    resizeCanvas() {
+        const rect = canvas.parentElement.getBoundingClientRect();
+        canvas.width = rect.width;
+        canvas.height = rect.height;
     },
 
     handleKeyboard(e) {
-        if (e.ctrlKey && e.key === 's') {
-            e.preventDefault();
-            document.getElementById('btn-export').click();
-        } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
             if (engine.selectedComponentId) {
                 engine.removeComponent(engine.selectedComponentId);
-                document.getElementById('status-text').textContent = 'Deleted selected component.';
+                this.updateTelemetry();
             }
         }
     },
 
-    renderLoop(timestamp = 0) {
-        // Calculate FPS
+    getComponentPins(comp) {
+        const width = 80;
+        const height = 50;
+        const pins = [];
+
+        if (comp.type === 'INPUT') {
+            pins.push({ pin: 0, x: comp.x + width, y: comp.y + height / 2, type: 'output' });
+        } else if (comp.type === 'OUTPUT') {
+            pins.push({ pin: 0, x: comp.x, y: comp.y + height / 2, type: 'input' });
+        } else if (comp.type === 'NOT') {
+            pins.push({ pin: 0, x: comp.x, y: comp.y + height / 2, type: 'input' });
+            pins.push({ pin: 0, x: comp.x + width, y: comp.y + height / 2, type: 'output' });
+        } else {
+            pins.push({ pin: 0, x: comp.x, y: comp.y + height * 0.3, type: 'input' });
+            pins.push({ pin: 1, x: comp.x, y: comp.y + height * 0.7, type: 'input' });
+            pins.push({ pin: 0, x: comp.x + width, y: comp.y + height / 2, type: 'output' });
+        }
+        return pins;
+    },
+
+    handleMouseDown(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        if (activeComponentType) {
+            engine.addComponent(activeComponentType, x - 40, y - 25);
+            activeComponentType = null;
+            this.updateTelemetry();
+            return;
+        }
+
+        // Check pin clicks for wiring
+        for (const [id, comp] of engine.components.entries()) {
+            const pins = this.getComponentPins(comp);
+            for (const pin of pins) {
+                const dist = Math.hypot(pin.x - x, pin.y - y);
+                if (dist < 10) {
+                    if (pin.type === 'output') {
+                        wireStartComp = id;
+                        wireStartPin = pin.pin;
+                        return;
+                    } else if (pin.type === 'input' && wireStartComp) {
+                        engine.addWire(wireStartComp, wireStartPin, id, pin.pin);
+                        wireStartComp = null;
+                        wireStartPin = null;
+                        this.updateTelemetry();
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Check component selection / dragging
+        let clickedCompId = null;
+        for (const [id, comp] of engine.components.entries()) {
+            if (x >= comp.x && x <= comp.x + 80 && y >= comp.y && y <= comp.y + 50) {
+                clickedCompId = id;
+                break;
+            }
+        }
+
+        if (clickedCompId) {
+            const comp = engine.components.get(clickedCompId);
+            if (comp.type === 'INPUT') {
+                comp.state = comp.state === 1 ? 0 : 1;
+            }
+            engine.selectedComponentId = clickedCompId;
+            isDragging = true;
+            draggedComponent = comp;
+            dragOffsetX = x - comp.x;
+            dragOffsetY = y - comp.y;
+        } else {
+            engine.selectedComponentId = null;
+            wireStartComp = null;
+        }
+    },
+
+    handleMouseMove(e) {
+        const rect = canvas.getBoundingClientRect();
+        currentMouseX = e.clientX - rect.left;
+        currentMouseY = e.clientY - rect.top;
+
+        if (isDragging && draggedComponent) {
+            draggedComponent.x = currentMouseX - dragOffsetX;
+            draggedComponent.y = currentMouseY - dragOffsetY;
+        }
+    },
+
+    handleMouseUp(e) {
+        isDragging = false;
+        draggedComponent = null;
+    },
+
+    updateTelemetry() {
+        document.getElementById('tele-comps').textContent = engine.components.size;
+        document.getElementById('tele-wires').textContent = engine.wires.length;
+        document.getElementById('tele-cycles').textContent = engine.clockCycles;
+    },
+
+    loop(timestamp) {
         frameCount++;
         if (timestamp - lastTime >= 1000) {
             fps = frameCount;
             frameCount = 0;
             lastTime = timestamp;
-            document.getElementById('fps-text').textContent = `FPS: ${fps}`;
+            document.getElementById('tele-fps').textContent = fps;
         }
 
         if (engine.isRunning) {
             engine.step();
+            this.updateTelemetry();
         }
 
-        this.draw();
-        requestAnimationFrame((t) => this.renderLoop(t));
+        this.render();
+        requestAnimationFrame((t) => this.loop(t));
     },
 
-    draw() {
-        const width = canvas.width / window.devicePixelRatio;
-        const height = canvas.height / window.devicePixelRatio;
-        ctx.clearRect(0, 0, width, height);
+    render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Draw grid pattern
+        // Render grid background
         ctx.strokeStyle = '#1e293b';
         ctx.lineWidth = 1;
         const gridSize = 30;
-        for (let x = 0; x < width; x += gridSize) {
+        for (let x = 0; x < canvas.width; x += gridSize) {
             ctx.beginPath();
             ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
+            ctx.lineTo(x, canvas.height);
             ctx.stroke();
         }
-        for (let y = 0; y < height; y += gridSize) {
+        for (let y = 0; y < canvas.height; y += gridSize) {
             ctx.beginPath();
             ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
+            ctx.lineTo(canvas.width, y);
             ctx.stroke();
         }
 
-        // Draw wires
+        // Render wires
         for (const wire of engine.wires) {
-            const fromComp = engine.components.get(wire.from);
-            const toComp = engine.components.get(wire.to);
+            const fromComp = engine.components.get(wire.fromComp);
+            const toComp = engine.components.get(wire.toComp);
             if (fromComp && toComp) {
-                ctx.beginPath();
-                ctx.moveTo(fromComp.x, fromComp.y);
-                ctx.lineTo(toComp.x, toComp.y);
-                ctx.strokeStyle = wire.state === 1 ? '#38bdf8' : '#334155';
-                ctx.lineWidth = 3;
-                ctx.stroke();
+                const fromPins = this.getComponentPins(fromComp);
+                const toPins = this.getComponentPins(toComp);
+                const outPin = fromPins.find(p => p.type === 'output');
+                const inPin = toPins.find(p => p.pin === wire.toPin && p.type === 'input');
+
+                if (outPin && inPin) {
+                    ctx.strokeStyle = wire.state === 1 ? '#38bdf8' : '#334155';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.moveTo(outPin.x, outPin.y);
+                    const midX = (outPin.x + inPin.x) / 2;
+                    ctx.bezierCurveTo(midX, outPin.y, midX, inPin.y, inPin.x, inPin.y);
+                    ctx.stroke();
+                }
             }
         }
 
-        // Draw components
-        for (const [id, comp] of engine.components) {
-            ctx.save();
-            ctx.translate(comp.x, comp.y);
+        // Render active wire preview
+        if (wireStartComp) {
+            const fromComp = engine.components.get(wireStartComp);
+            if (fromComp) {
+                const fromPins = this.getComponentPins(fromComp);
+                const outPin = fromPins.find(p => p.type === 'output');
+                if (outPin) {
+                    ctx.strokeStyle = '#38bdf8';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(outPin.x, outPin.y);
+                    ctx.lineTo(currentMouseX, currentMouseY);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
+        }
 
-            const isSelected = engine.selectedComponentId === comp.id;
-            
-            // Box background
+        // Render components
+        for (const [id, comp] of engine.components.entries()) {
+            const isSelected = id === engine.selectedComponentId;
+            const width = 80;
+            const height = 50;
+
             ctx.fillStyle = '#1e293b';
-            ctx.strokeStyle = isSelected ? '#38bdf8' : (comp.fault !== 'NONE' ? '#f43f5e' : '#475569');
-            ctx.lineWidth = isSelected ? 3 : 2;
+            ctx.strokeStyle = isSelected ? '#38bdf8' : '#334155';
+            ctx.lineWidth = isSelected ? 2 : 1;
 
             ctx.beginPath();
-            ctx.roundRect(-32, -22, 64, 44, 8);
+            ctx.roundRect(comp.x, comp.y, width, height, 6);
             ctx.fill();
             ctx.stroke();
 
-            // State indicator glow
-            if (comp.state === 1) {
-                ctx.shadowColor = '#38bdf8';
-                ctx.shadowBlur = 10;
-            }
-
-            // Text label
+            // Component text label
             ctx.fillStyle = '#f8fafc';
-            ctx.font = '600 12px system-ui, sans-serif';
+            ctx.font = '12px system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(comp.type, 0, comp.fault !== 'NONE' ? -6 : 0);
+            ctx.fillText(comp.type, comp.x + width / 2, comp.y + height / 2);
 
-            // Fault badge if active
-            if (comp.fault !== 'NONE') {
+            // Fault badge indicator
+            if (comp.fault && comp.fault !== 'NONE') {
                 ctx.fillStyle = '#f43f5e';
-                ctx.font = '700 10px monospace';
-                ctx.fillText(`[${comp.fault}]`, 0, 10);
+                ctx.font = '10px monospace';
+                ctx.fillText(comp.fault, comp.x + width / 2, comp.y - 8);
             }
 
-            ctx.restore();
-        }
-
-        // Draw active wire preview if shifting
-        if (wireStartComp) {
-            // Preview state managed in mousemove if needed
+            // Render pins
+            const pins = this.getComponentPins(comp);
+            for (const pin of pins) {
+                ctx.fillStyle = pin.type === 'output' ? (comp.state === 1 ? '#38bdf8' : '#64748b') : '#64748b';
+                ctx.beginPath();
+                ctx.arc(pin.x, pin.y, 4, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
     }
 };
 
-App.init();
+window.addEventListener('DOMContentLoaded', () => {
+    App.init();
+});

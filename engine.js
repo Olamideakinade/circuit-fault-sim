@@ -6,137 +6,178 @@ export class SimulatorEngine {
         this.isRunning = false;
         this.faultMode = 'NONE'; // 'NONE', 'SA0', 'SA1'
         this.selectedComponentId = null;
+        this.clockCycles = 0;
     }
 
     addComponent(type, x, y) {
-        try {
-            const id = `comp_${this.nextId++}`;
-            this.components.set(id, {
-                id,
-                type,
-                x,
-                y,
-                state: 0,
-                fault: 'NONE'
-            });
-            return id;
-        } catch (e) {
-            console.error('Failed to instantiate component:', e);
-            return null;
+        const id = `comp_${this.nextId++}`;
+        let inputs = 2;
+        if (type === 'NOT' || type === 'INPUT' || type === 'OUTPUT') {
+            inputs = 1;
         }
+        if (type === 'FLIP_FLOP') {
+            inputs = 2;
+        }
+        
+        this.components.set(id, {
+            id,
+            type,
+            x,
+            y,
+            state: 0,
+            inputs: new Array(inputs).fill(0),
+            inputSources: new Array(inputs).fill(null),
+            fault: 'NONE'
+        });
+        return id;
     }
 
     removeComponent(id) {
-        if (this.components.has(id)) {
-            this.components.delete(id);
-            this.wires = this.wires.filter(w => w.from !== id && w.to !== id);
-            if (this.selectedComponentId === id) {
-                this.selectedComponentId = null;
-            }
-            return true;
+        this.components.delete(id);
+        this.wires = this.wires.filter(w => w.fromComp !== id && w.toComp !== id);
+        if (this.selectedComponentId === id) {
+            this.selectedComponentId = null;
         }
-        return false;
     }
 
-    addWire(from, to, fromPin = 0, toPin = 0) {
-        if (this.components.has(from) && this.components.has(to)) {
-            this.wires.push({ from, to, fromPin, toPin, state: 0 });
-            return true;
+    addWire(fromComp, fromPin, toComp, toPin) {
+        // Prevent duplicate or self wires
+        if (fromComp === toComp) return false;
+        
+        // Remove existing wire going into the same target pin
+        this.wires = this.wires.filter(w => !(w.toComp === toComp && w.toPin === toPin));
+        
+        this.wires.push({
+            fromComp,
+            fromPin,
+            toComp,
+            toPin,
+            state: 0
+        });
+        return true;
+    }
+
+    removeWire(index) {
+        if (index >= 0 && index < this.wires.length) {
+            this.wires.splice(index, 1);
         }
-        return false;
+    }
+
+    setFault(componentId, faultType) {
+        const comp = this.components.get(componentId);
+        if (comp) {
+            comp.fault = faultType;
+        }
     }
 
     step() {
-        // Evaluate combinational and sequential logic
-        for (const [id, comp] of this.components) {
-            if (comp.type === 'INPUT') {
-                // Inputs retain state or toggle if clicked
-                continue;
+        this.clockCycles++;
+        
+        // Reset inputs for combinatorial evaluation
+        for (const comp of this.components.values()) {
+            if (comp.type !== 'INPUT') {
+                comp.inputs.fill(0);
             }
-
-            // Gather input states
-            const incomingWires = this.wires.filter(w => w.to === id);
-            const inputStates = incomingWires.map(w => {
-                const sourceComp = this.components.get(w.from);
-                return sourceComp ? sourceComp.state : 0;
-            });
-
-            let newState = 0;
-            if (comp.type === 'NOT') {
-                newState = inputStates.length > 0 ? (inputStates[0] === 0 ? 1 : 0) : 0;
-            } else if (comp.type === 'AND') {
-                newState = inputStates.length > 0 && inputStates.every(s => s === 1) ? 1 : 0;
-            } else if (comp.type === 'OR') {
-                newState = inputStates.some(s => s === 1) ? 1 : 0;
-            } else if (comp.type === 'FLIP-FLOP') {
-                newState = inputStates.length > 0 ? inputStates[0] : comp.state;
-            } else if (comp.type === 'OUTPUT') {
-                newState = inputStates.length > 0 ? inputStates[0] : 0;
-            }
-
-            // Apply fault injection if active
-            if (comp.fault === 'SA0') {
-                newState = 0;
-            } else if (comp.fault === 'SA1') {
-                newState = 1;
-            }
-
-            comp.state = newState;
         }
 
         // Propagate wire states
         for (const wire of this.wires) {
-            const sourceComp = this.components.get(wire.from);
+            const sourceComp = this.components.get(wire.fromComp);
             if (sourceComp) {
                 wire.state = sourceComp.state;
+                const targetComp = this.components.get(wire.toComp);
+                if (targetComp && wire.toPin < targetComp.inputs.length) {
+                    targetComp.inputs[wire.toPin] = wire.state;
+                }
             }
         }
-    }
 
-    injectFault(id, faultType) {
-        if (this.components.has(id)) {
-            const comp = this.components.get(id);
-            comp.fault = faultType;
-            return true;
-        }
-        return false;
-    }
-
-    reset() {
-        for (const [id, comp] of this.components) {
-            comp.state = 0;
-            comp.fault = 'NONE';
-        }
-        for (const wire of this.wires) {
-            wire.state = 0;
-        }
-    }
-
-    validate() {
-        for (const wire of this.wires) {
-            if (!this.components.has(wire.from) || !this.components.has(wire.to)) {
-                return false;
+        // Compute component states
+        for (const comp of this.components.values()) {
+            let computedState = 0;
+            switch (comp.type) {
+                case 'INPUT':
+                    computedState = comp.state;
+                    break;
+                case 'OUTPUT':
+                    computedState = comp.inputs[0];
+                    break;
+                case 'NOT':
+                    computedState = comp.inputs[0] === 1 ? 0 : 1;
+                    break;
+                case 'AND':
+                    computedState = (comp.inputs[0] === 1 && comp.inputs[1] === 1) ? 1 : 0;
+                    break;
+                case 'OR':
+                    computedState = (comp.inputs[0] === 1 || comp.inputs[1] === 1) ? 1 : 0;
+                    break;
+                case 'NAND':
+                    computedState = (comp.inputs[0] === 1 && comp.inputs[1] === 1) ? 0 : 1;
+                    break;
+                case 'NOR':
+                    computedState = (comp.inputs[0] === 1 || comp.inputs[1] === 1) ? 0 : 1;
+                    break;
+                case 'XOR':
+                    computedState = (comp.inputs[0] !== comp.inputs[1]) ? 1 : 0;
+                    break;
+                case 'FLIP_FLOP':
+                    // Simple D flip-flop on rising edge model
+                    const d = comp.inputs[0];
+                    const clk = comp.inputs[1];
+                    if (comp.prevClk === 0 && clk === 1) {
+                        comp.state = d;
+                    }
+                    comp.prevClk = clk;
+                    computedState = comp.state;
+                    break;
             }
+
+            // Apply fault injection models
+            if (comp.fault === 'SA0') {
+                computedState = 0;
+            } else if (comp.fault === 'SA1') {
+                computedState = 1;
+            }
+
+            comp.state = computedState;
         }
-        return true;
     }
 
-    serialize() {
-        return {
-            components: Array.from(this.components.entries()),
+    exportJSON() {
+        const data = {
+            version: '1.3.0',
+            components: Array.from(this.components.values()),
             wires: this.wires,
             nextId: this.nextId
         };
+        return JSON.stringify(data, null, 2);
     }
 
-    deserialize(data) {
+    importJSON(jsonString) {
         try {
-            this.components = new Map(data.components);
-            this.wires = data.wires || [];
-            this.nextId = data.nextId || (this.components.size + 1);
+            const data = JSON.parse(jsonString);
+            this.components.clear();
+            this.wires = [];
+            this.nextId = data.nextId || 1;
+            this.clockCycles = 0;
+
+            if (Array.isArray(data.components)) {
+                for (const c of data.components) {
+                    this.components.set(c.id, {
+                        ...c,
+                        inputs: c.inputs || [0, 0],
+                        inputSources: c.inputSources || [null, null],
+                        fault: c.fault || 'NONE'
+                    });
+                }
+            }
+
+            if (Array.isArray(data.wires)) {
+                this.wires = data.wires;
+            }
             return true;
         } catch (e) {
-            console.error('Failed to deserialize circuit state:', e);
+            console.error('Failed to import circuit JSON:', e);
             return false;
         }
     }

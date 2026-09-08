@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Circuit Fault Simulation Engine</title>
+    <title>Circuit Fault Simulation Engine v1.3.0</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,47 +11,53 @@
         <header class="toolbar">
             <div class="brand">
                 <h1>circuit-fault-sim</h1>
-                <span class="version">v1.2.0</span>
+                <span class="version">v1.3.0</span>
             </div>
             <div class="controls">
-                <button id="btn-step" class="btn">Step</button>
-                <button id="btn-run" class="btn btn-primary">Run</button>
-                <button id="btn-pause" class="btn" style="display:none;">Pause</button>
-                <button id="btn-reset" class="btn btn-danger">Reset</button>
+                <button id="btn-step" class="btn" title="Execute single clock cycle">Step</button>
+                <button id="btn-run" class="btn btn-primary" title="Toggle continuous simulation">Run</button>
+                <button id="btn-reset" class="btn btn-danger" title="Reset simulation state">Reset</button>
                 <div class="separator"></div>
-                <button id="btn-export" class="btn">Export JSON</button>
-                <button id="btn-import" class="btn">Import JSON</button>
-                <input type="file" id="file-input" accept=".json" style="display:none;">
+                <button id="btn-export" class="btn" title="Export circuit schema to JSON">Export</button>
+                <button id="btn-import" class="btn" title="Import circuit schema from JSON">Import</button>
+                <input type="file" id="file-input" accept=".json" style="display: none;">
             </div>
         </header>
         <div class="workspace">
             <aside class="sidebar">
-                <h3>Components</h3>
-                <div class="component-list">
-                    <button class="component-item" data-type="INPUT">INPUT</button>
-                    <button class="component-item" data-type="OUTPUT">OUTPUT</button>
-                    <button class="component-item" data-type="AND">AND Gate</button>
-                    <button class="component-item" data-type="OR">OR Gate</button>
-                    <button class="component-item" data-type="NOT">NOT Gate</button>
-                    <button class="component-item" data-type="FLIP-FLOP">D Flip-Flop</button>
+                <div class="panel-section">
+                    <h3>Components</h3>
+                    <div class="component-palette">
+                        <button class="palette-item" data-type="INPUT">Input Pin</button>
+                        <button class="palette-item" data-type="OUTPUT">Output Pin</button>
+                        <button class="palette-item" data-type="AND">AND Gate</button>
+                        <button class="palette-item" data-type="OR">OR Gate</button>
+                        <button class="palette-item" data-type="NOT">NOT Gate</button>
+                        <button class="palette-item" data-type="NAND">NAND Gate</button>
+                        <button class="palette-item" data-type="NOR">NOR Gate</button>
+                        <button class="palette-item" data-type="XOR">XOR Gate</button>
+                        <button class="palette-item" data-type="FLIP_FLOP">D Flip-Flop</button>
+                    </div>
                 </div>
-                <div class="fault-panel">
+                <div class="panel-section">
                     <h3>Fault Injection</h3>
-                    <label for="fault-type">Fault Mode:</label>
-                    <select id="fault-type" class="select">
-                        <option value="NONE">None</option>
-                        <option value="SA0">Stuck-At 0 (SA0)</option>
-                        <option value="SA1">Stuck-At 1 (SA1)</option>
-                    </select>
-                    <button id="btn-inject" class="btn btn-warning">Inject Fault</button>
+                    <div class="fault-controls">
+                        <button class="btn fault-btn" data-fault="NONE">Clear Fault</button>
+                        <button class="btn fault-btn" data-fault="SA0">Stuck-at-0 (SA0)</button>
+                        <button class="btn fault-btn" data-fault="SA1">Stuck-at-1 (SA1)</button>
+                    </div>
+                </div>
+                <div class="panel-section telemetry-panel">
+                    <h3>Diagnostics</h3>
+                    <div class="telemetry-row"><span>FPS:</span> <span id="tele-fps">60</span></div>
+                    <div class="telemetry-row"><span>Components:</span> <span id="tele-comps">0</span></div>
+                    <div class="telemetry-row"><span>Wires:</span> <span id="tele-wires">0</span></div>
+                    <div class="telemetry-row"><span>Clock Cycles:</span> <span id="tele-cycles">0</span></div>
                 </div>
             </aside>
             <main class="canvas-container">
                 <canvas id="sim-canvas"></canvas>
-                <div class="status-bar">
-                    <span id="status-text">Engine Ready. Select a component to place.</span>
-                    <span id="fps-text">FPS: 60</span>
-                </div>
+                <div id="tooltip" class="tooltip hidden"></div>
             </main>
         </div>
     </div>
