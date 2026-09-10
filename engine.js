@@ -23,9 +23,9 @@ export class SimulatorEngine {
             type,
             x,
             y,
-            inputs,
-            state: 0,
-            outputs: [0]
+            inputs: new Array(inputs).fill(false),
+            output: false,
+            fault: null // { type: 'SA0' | 'SA1' }
         };
         this.components.set(id, component);
         return id;
@@ -33,124 +33,138 @@ export class SimulatorEngine {
 
     removeComponent(id) {
         this.saveState();
-        this.components.delete(id);
-        this.wires = this.wires.filter(w => w.fromComp !== id && w.toComp !== id);
-        if (this.selectedComponentId === id) {
-            this.selectedComponentId = null;
+        if (this.components.has(id)) {
+            this.components.delete(id);
+            this.wires = this.wires.filter(w => w.fromComp !== id && w.toComp !== id);
+            if (this.selectedComponentId === id) {
+                this.selectedComponentId = null;
+            }
         }
     }
 
     addWire(fromComp, fromPin, toComp, toPin) {
         this.saveState();
-        // Prevent duplicate wire or invalid connection
-        const exists = this.wires.some(w => w.toComp === toComp && w.toPin === toPin);
-        if (!exists) {
-            this.wires.push({
-                fromComp,
-                fromPin,
-                toComp,
-                toPin,
-                state: 0
-            });
-        }
+        // Prevent duplicate wires to the same input pin
+        this.wires = this.wires.filter(w => !(w.toComp === toComp && w.toPin === toPin));
+        this.wires.push({ fromComp, fromPin, toComp, toPin, signal: false });
     }
 
-    clear() {
+    removeWire(index) {
         this.saveState();
-        this.components.clear();
-        this.wires = [];
-        this.clockCycles = 0;
-        this.selectedComponentId = null;
+        if (index >= 0 && index < this.wires.length) {
+            this.wires.splice(index, 1);
+        }
     }
 
     saveState() {
-        if (this.history.length > 20) this.history.shift();
-        this.history.push(this.exportJSON());
+        const state = {
+            components: Array.from(this.components.entries()),
+            wires: JSON.parse(JSON.stringify(this.wires)),
+            clockCycles: this.clockCycles
+        };
+        this.history.push(JSON.stringify(state));
+        if (this.history.length > 50) {
+            this.history.shift();
+        }
     }
 
     undo() {
-        if (this.history.length > 0) {
-            const prevState = this.history.pop();
-            this.importJSON(prevState, false);
-        }
-    }
-
-    getComponentPins(comp) {
-        const pins = [];
-        if (comp.type === 'INPUT') {
-            pins.push({ name: 'out', x: comp.x + 60, y: comp.y + 20, state: comp.state });
-        } else if (comp.type === 'OUTPUT') {
-            pins.push({ name: 'in', x: comp.x, y: comp.y + 20, state: comp.state });
-        } else if (comp.type === 'NOT') {
-            pins.push({ name: 'in', x: comp.x, y: comp.y + 20, state: 0 });
-            pins.push({ name: 'out', x: comp.x + 60, y: comp.y + 20, state: comp.state });
-        } else {
-            pins.push({ name: 'in1', x: comp.x, y: comp.y + 10, state: 0 });
-            pins.push({ name: 'in2', x: comp.x, y: comp.y + 30, state: 0 });
-            pins.push({ name: 'out', x: comp.x + 60, y: comp.y + 20, state: comp.state });
-        }
-        return pins;
+        if (this.history.length === 0) return false;
+        const prevState = JSON.parse(this.history.pop());
+        this.components = new Map(prevState.components);
+        this.wires = prevState.wires;
+        this.clockCycles = prevState.clockCycles;
+        return true;
     }
 
     step() {
-        this.clockCycles++;
-        // Propagate wire states from outputs
-        this.wires.forEach(w => {
-            const src = this.components.get(w.fromComp);
-            if (src) {
-                w.state = src.state;
+        // 1. Propagate signals through wires
+        for (const wire of this.wires) {
+            const sourceComp = this.components.get(wire.fromComp);
+            if (sourceComp) {
+                wire.signal = sourceComp.output;
             }
-        });
-
-        // Compute component logic
-        for (let comp of this.components.values()) {
-            if (comp.type === 'INPUT') continue;
-
-            const incomingWires = this.wires.filter(w => w.toComp === comp.id);
-            let val1 = 0;
-            let val2 = 0;
-
-            incomingWires.forEach(w => {
-                if (w.toPin === 'in' || w.toPin === 'in1') val1 = w.state;
-                if (w.toPin === 'in2') val2 = w.state;
-            });
-
-            let res = 0;
-            switch (comp.type) {
-                case 'AND': res = val1 & val2; break;
-                case 'OR': res = val1 | val2; break;
-                case 'XOR': res = val1 ^ val2; break;
-                case 'NOT': res = val1 ? 0 : 1; break;
-                case 'NAND': res = (val1 & val2) ? 0 : 1; break;
-                case 'NOR': res = (val1 | val2) ? 0 : 1; break;
-                case 'OUTPUT': res = val1; break;
-                case 'FLIP_FLOP': res = val1; break;
-            }
-
-            if (this.faultMode === 'SA0') res = 0;
-            if (this.faultMode === 'SA1') res = 1;
-
-            comp.state = res;
         }
+
+        // 2. Update component inputs from connected wires
+        for (const [id, comp] of this.components.entries()) {
+            for (let i = 0; i < comp.inputs.length; i++) {
+                const incomingWire = this.wires.find(w => w.toComp === id && w.toPin === i);
+                if (incomingWire) {
+                    comp.inputs[i] = incomingWire.signal;
+                } else if (comp.type !== 'INPUT') {
+                    comp.inputs[i] = false;
+                }
+            }
+        }
+
+        // 3. Compute component outputs based on logic type
+        for (const [id, comp] of this.components.entries()) {
+            let computed = false;
+            switch (comp.type) {
+                case 'INPUT':
+                    computed = comp.inputs[0];
+                    break;
+                case 'OUTPUT':
+                    computed = comp.inputs[0];
+                    break;
+                case 'NOT':
+                    computed = !comp.inputs[0];
+                    break;
+                case 'AND':
+                    computed = comp.inputs.every(val => val === true);
+                    break;
+                case 'OR':
+                    computed = comp.inputs.some(val => val === true);
+                    break;
+                case 'XOR':
+                    computed = comp.inputs.reduce((acc, val) => acc !== val, false);
+                    break;
+                case 'NAND':
+                    computed = !comp.inputs.every(val => val === true);
+                    break;
+                case 'NOR':
+                    computed = !comp.inputs.some(val => val === true);
+                    break;
+                default:
+                    computed = false;
+            }
+
+            // Apply fault injection if present
+            if (comp.fault) {
+                if (comp.fault.type === 'SA0') {
+                    computed = false;
+                } else if (comp.fault.type === 'SA1') {
+                    computed = true;
+                }
+            }
+
+            comp.output = computed;
+        }
+
+        this.clockCycles++;
     }
 
     exportJSON() {
-        const data = {
-            version: '1.4.0',
-            nextId: this.nextId,
-            clockCycles: this.clockCycles,
+        return JSON.stringify({
+            version: '1.5.0',
             components: Array.from(this.components.entries()),
-            wires: this.wires
-        };
-        return JSON.stringify(data, null, 2);
+            wires: this.wires,
+            clockCycles: this.clockCycles
+        }, null, 2);
     }
 
-    importJSON(jsonString, recordHistory = true) {
-        if (recordHistory) this.saveState();
-        const data = JSON.parse(jsonString);
-        this.nextId = data.nextId || 1;
-        this.clockCycles = data.clockCycles || 0;
-        this.components = new Map(data.components);
-        this.wires = data.wires || [];
+    importJSON(jsonString) {
+        try {
+            const data = JSON.parse(jsonString);
+            this.components = new Map(data.components);
+            this.wires = data.wires || [];
+            this.clockCycles = data.clockCycles || 0;
+            this.history = [];
+            return true;
+        } catch (e) {
+            console.error('Failed to import circuit JSON:', e);
+            return false;
+        }
     }
 }

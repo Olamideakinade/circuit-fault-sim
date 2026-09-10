@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Circuit Fault Simulation Engine v1.3.0</title>
+    <title>Circuit Fault Simulation Engine v1.5.0</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,53 +11,36 @@
         <header class="toolbar">
             <div class="brand">
                 <h1>circuit-fault-sim</h1>
-                <span class="version">v1.3.0</span>
+                <span class="version">v1.5.0</span>
             </div>
             <div class="controls">
                 <button id="btn-step" class="btn" title="Execute single clock cycle">Step</button>
-                <button id="btn-run" class="btn btn-primary" title="Toggle continuous simulation">Run</button>
-                <button id="btn-reset" class="btn btn-danger" title="Reset simulation state">Reset</button>
-                <div class="separator"></div>
-                <button id="btn-export" class="btn" title="Export circuit schema to JSON">Export</button>
-                <button id="btn-import" class="btn" title="Import circuit schema from JSON">Import</button>
-                <input type="file" id="file-input" accept=".json" style="display: none;">
+                <button id="btn-play" class="btn" title="Run/Pause simulation">Play</button>
+                <button id="btn-undo" class="btn" title="Undo last action">Undo</button>
             </div>
         </header>
-        <div class="workspace">
+        <div class="main-layout">
             <aside class="sidebar">
-                <div class="panel-section">
+                <div class="palette">
                     <h3>Components</h3>
-                    <div class="component-palette">
-                        <button class="palette-item" data-type="INPUT">Input Pin</button>
-                        <button class="palette-item" data-type="OUTPUT">Output Pin</button>
-                        <button class="palette-item" data-type="AND">AND Gate</button>
-                        <button class="palette-item" data-type="OR">OR Gate</button>
-                        <button class="palette-item" data-type="NOT">NOT Gate</button>
-                        <button class="palette-item" data-type="NAND">NAND Gate</button>
-                        <button class="palette-item" data-type="NOR">NOR Gate</button>
-                        <button class="palette-item" data-type="XOR">XOR Gate</button>
-                        <button class="palette-item" data-type="FLIP_FLOP">D Flip-Flop</button>
-                    </div>
+                    <button class="palette-btn" data-type="INPUT">INPUT</button>
+                    <button class="palette-btn" data-type="OUTPUT">OUTPUT</button>
+                    <button class="palette-btn" data-type="AND">AND</button>
+                    <button class="palette-btn" data-type="OR">OR</button>
+                    <button class="palette-btn" data-type="NOT">NOT</button>
+                    <button class="palette-btn" data-type="XOR">XOR</button>
+                    <button class="palette-btn" data-type="NAND">NAND</button>
+                    <button class="palette-btn" data-type="NOR">NOR</button>
                 </div>
-                <div class="panel-section">
-                    <h3>Fault Injection</h3>
-                    <div class="fault-controls">
-                        <button class="btn fault-btn" data-fault="NONE">Clear Fault</button>
-                        <button class="btn fault-btn" data-fault="SA0">Stuck-at-0 (SA0)</button>
-                        <button class="btn fault-btn" data-fault="SA1">Stuck-at-1 (SA1)</button>
-                    </div>
-                </div>
-                <div class="panel-section telemetry-panel">
-                    <h3>Diagnostics</h3>
-                    <div class="telemetry-row"><span>FPS:</span> <span id="tele-fps">60</span></div>
-                    <div class="telemetry-row"><span>Components:</span> <span id="tele-comps">0</span></div>
-                    <div class="telemetry-row"><span>Wires:</span> <span id="tele-wires">0</span></div>
-                    <div class="telemetry-row"><span>Clock Cycles:</span> <span id="tele-cycles">0</span></div>
+                <div class="test-panel">
+                    <h3>Test & Benchmarks</h3>
+                    <button id="btn-run-tests" class="btn">Run Unit Tests</button>
+                    <button id="btn-run-bench" class="btn">Run Benchmark</button>
+                    <div id="test-output" class="test-output"></div>
                 </div>
             </aside>
             <main class="canvas-container">
                 <canvas id="sim-canvas"></canvas>
-                <div id="tooltip" class="tooltip hidden"></div>
             </main>
         </div>
     </div>
